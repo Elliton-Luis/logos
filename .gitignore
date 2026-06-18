@@ -1,0 +1,5 @@
+.env
+progress.md
+*.bak
+*.cache
+*.cache.hash
