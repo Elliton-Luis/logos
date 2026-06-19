@@ -128,7 +128,8 @@ logos undo controllers/user.go
 
 ## Fluxo de Processamento
 
-Fragmento do códigograph TD
+```mermaid
+graph TD
     A[Caminho dos Arquivos Informados] --> B[Agregação de Workspace: Consolida arquivos no prompt]
     B --> C[Carrega Cache estrutural prévio se houver]
     C --> D[Roteador HTTP: Injeta regras rígidas de segurança + Contexto]
@@ -138,3 +139,4 @@ Fragmento do códigograph TD
     G --> H{Confirmação do Usuário?}
     H -->|Sim| I[Gera Backup .bak.json e escreve arquivos autorizados em disco]
     H -->|Não| J[Aborta a operação mantendo os arquivos intactos]
+```
