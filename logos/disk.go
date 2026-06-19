@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -91,8 +92,14 @@ func Rollback(paths MetaPaths) {
 	slog.Info("Rollback do espaço de trabalho executado com sucesso!")
 }
 
-func AppendProgress(target, action, instruction, aiSummary, modelName string, tokens int) {
-	const progressFile = "progress.md"
+// AppendProgress grava uma nova entrada no docs/progress.md e retorna o total
+// acumulado de tokens usados (incluindo esta execução).
+func AppendProgress(target, action, instruction, aiSummary, modelName string, tokens int, elapsed time.Duration) int {
+	const progressFile = "docs/progress.md"
+	
+	// Garante que a pasta docs exista antes de tentar ler/escrever
+	_ = os.MkdirAll("docs", 0755)
+	
 	existing, _ := os.ReadFile(progressFile)
 	lineNumber := strings.Count(string(existing), "### ") + 1
 	timestamp := time.Now().Format("02/01/2006 15:04")
@@ -102,15 +109,29 @@ func AppendProgress(target, action, instruction, aiSummary, modelName string, to
 		tokenInfo = fmt.Sprintf("%d", tokens)
 	}
 
-	entry := fmt.Sprintf("\n### %d. `%s` (%s) - %s\n> **Instruction:** %s\n> **Model:** %s\n> **Tokens:** %s\n\n**Technical Summary:**\n%s\n\n---\n",
-		lineNumber, target, action, timestamp, instruction, modelName, tokenInfo, aiSummary)
+	entry := fmt.Sprintf("\n### %d. `%s` (%s) - %s\n> **Instruction:** %s\n> **Model:** %s\n> **Tokens:** %s\n> **Time:** %s\n\n**Technical Summary:**\n%s\n\n---\n",
+		lineNumber, target, action, timestamp, instruction, modelName, tokenInfo, elapsed.Round(time.Millisecond), aiSummary)
 
 	f, err := os.OpenFile(progressFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return
+	if err == nil {
+		defer f.Close()
+		_, _ = f.WriteString(entry)
 	}
-	defer f.Close()
-	_, _ = f.WriteString(entry)
+
+	return sumTokens(string(existing)) + tokens
+}
+
+func sumTokens(content string) int {
+	total := 0
+	for _, line := range strings.Split(content, "\n") {
+		if idx := strings.Index(line, "**Tokens:**"); idx != -1 {
+			numStr := strings.TrimSpace(line[idx+len("**Tokens:**"):])
+			if n, err := strconv.Atoi(numStr); err == nil {
+				total += n
+			}
+		}
+	}
+	return total
 }
 
 func AskForInput(prompt string) string {
