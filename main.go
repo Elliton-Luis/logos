@@ -13,8 +13,30 @@ import (
 	"logos/logos"
 )
 
+// ensureDefaultPromptMD garante que um arquivo prompt.md de exemplo exista na raiz
+func ensureDefaultPromptMD() {
+	if _, err := os.Stat("prompt.md"); err == nil {
+		return
+	}
+	exampleContent := `# Exemplo de Prompt para o Logos CLI
+Ação Solicitada: feat
+Objetivo: Criar uma página index.html educativa explicando as melhores práticas de escrita de prompts para o Logos CLI.
+
+## Requisitos da Página:
+1. Um design limpo, moderno e responsivo (pode usar um tema escuro elegante).
+2. Seções explicando:
+   - **Clareza de Contexto:** Como o Logos envia os arquivos atuais automaticamente.
+   - **Formato de Saída:** Por que não precisamos nos preocupar com a estrutura (o Go cuida disso via JSON).
+   - **Instruções Modulares:** A vantagem de usar arquivos ".md" separados para prompts complexos.
+3. Adicione um componente visual bonito (como cards ou uma timeline) detalhando o fluxo de dados (Workspace -> Go -> IA -> Go -> Disco).
+`
+	_ = os.WriteFile("prompt.md", []byte(exampleContent), 0644)
+	slog.Info("Arquivo 'prompt.md' de exemplo criado automaticamente na raiz!")
+}
+
 func main() {
 	logos.EnsureGitignore()
+	ensureDefaultPromptMD() // Garante a criação do prompt.md de exemplo
 
 	dryRun := flag.Bool("dry-run", false, "Shows changes without saving updates")
 	verbose := flag.Bool("v", false, "Enables debug log output")
@@ -61,10 +83,26 @@ func main() {
 	} else {
 		action = strings.ToLower(flag.Arg(0))
 		targetPath = flag.Arg(1)
+		
 		if len(flag.Args()) >= 3 {
-			instruction = flag.Arg(2)
+			argPrompt := flag.Arg(2)
+			// VALIDAÇÃO INTELIGENTE: Se o argumento apontar para um arquivo real, lê o arquivo
+			if _, err := os.Stat(argPrompt); err == nil {
+				data, err := os.ReadFile(argPrompt)
+				if err == nil {
+					slog.Info("Reading prompt instruction from file", "path", argPrompt)
+					instruction = strings.TrimSpace(string(data))
+				} else {
+					instruction = argPrompt
+				}
+			} else {
+				// Se não for um arquivo, assume que é o texto direto do prompt entre aspas
+				instruction = argPrompt
+			}
 		} else if action != "undo" && action != "cache" {
+			// Fallback caso não passe o terceiro argumento, tenta ler o prompt.md padrão da raiz
 			if data, err := os.ReadFile("prompt.md"); err == nil {
+				slog.Info("No instruction argument provided. Using default 'prompt.md'")
 				instruction = strings.TrimSpace(string(data))
 			} else {
 				slog.Error("No instruction provided and 'prompt.md' missing.")
