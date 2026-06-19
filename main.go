@@ -21,7 +21,6 @@ func ensureDirectoryStructure() {
 	for _, dir := range directories {
 		if _, err := os.Stat(dir); os.IsNotExist(err) {
 			_ = os.MkdirAll(dir, 0755)
-			slog.Debug("Pasta criada automaticamente", "dir", dir)
 		}
 	}
 }
@@ -63,7 +62,6 @@ func formatThousands(n int) string {
 }
 
 func main() {
-	// Garante a estrutura perfeita de pastas logo no início
 	ensureDirectoryStructure()
 	logos.EnsureGitignore()
 	ensureDefaultPromptMD()
@@ -73,26 +71,34 @@ func main() {
 	providerFlag := flag.String("p", "", "AI Provider (groq, gemini)")
 	modelFlag := flag.String("m", "", "AI Model identifier")
 	
-	// --- NOUVEAUX ATALHOS RÁPIDOS DE PROVEDOR ---
 	groqShortcut := flag.Bool("groq", false, "Atalho rápido para usar o provedor GROQ")
 	geminiShortcut := flag.Bool("gemini", false, "Atalho rápido para usar o provedor GEMINI")
 
-	flag.Usage = func() {
-		fmt.Println("Uso: logos [-p provider] [-m model] [-groq] [-gemini] <action> <target_files_or_dirs...> [instruction]")
-		fmt.Println("\nExemplos:")
-		fmt.Println("  logos -gemini feat main.py \"Função de soma de dois números\"")
-		fmt.Println("  logos -groq fix index.html \"Corrija o bug do menu\"")
-		fmt.Println("  logos feat cv.md template.md vaga.txt perfil.txt docs/prompt.md")
-	}
+	flag.Usage = logos.PrintUsage
 	flag.Parse()
 
 	logLevel := slog.LevelInfo
 	if *verbose {
 		logLevel = slog.LevelDebug
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel})))
 
-	// Resolve a precedência das flags de provedor/modelo
+	// Configuração do Logger Sem Timestamps ou Níveis poluindo a saída padrão
+	var handler slog.Handler
+	if *verbose {
+		handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
+	} else {
+		handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+			Level: logLevel,
+			ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+				if a.Key == slog.TimeKey || a.Key == slog.LevelKey {
+					return slog.Attr{} // Remove o tempo e o level do log na saída normal
+				}
+				return a
+			},
+		})
+	}
+	slog.SetDefault(slog.New(handler))
+
 	provider := *providerFlag
 	model := *modelFlag
 
@@ -265,16 +271,16 @@ Você receberá múltiplos arquivos de contexto e deve retornar a resposta estri
 		slog.Warn("Could not display diff visualizer", "error", err)
 	}
 
-	fmt.Printf("\n✨ AI Technical Summary:\n%s\n\n", parsedResponse.Summary)
-	fmt.Printf("🤖 Model: %s (%s) | 🔢 Tokens: %d | ⏱️  Time: %s\n\n",
-		cfg.Model, cfg.Provider, tokens, elapsed.Round(time.Millisecond))
+	// 1. Exibe o resumo técnico logo após o Diff
+	fmt.Printf("\nSummary:\n%s\n\n", parsedResponse.Summary)
 
 	if *dryRun {
-		fmt.Println("\nMode --dry-run active. Changes were not written down.")
+		fmt.Println("Mode --dry-run active. Changes were not written down.")
 		return
 	}
 
-	if !logos.AskForConfirmation("\nApply workspace adjustments to the files above? (y/n): ") {
+	// 2. Confirmação Limpa Estilo PowerShell
+	if !logos.AskForConfirmation("Apply workspace adjustments?") {
 		fmt.Println("Cancelled.")
 		return
 	}
@@ -291,10 +297,15 @@ Você receberá múltiplos arquivos de contexto e deve retornar a resposta estri
 		}
 	}
 
+	// 3. Log de Sucesso limpo sem data/hora
 	slog.Info("Workspace successfully updated!")
 
+	// 4. Métricas consolidadas salvas estritamente no rodapé final
 	totalTokens := logos.AppendProgress(paths.WorkspaceRoot, action, instruction, parsedResponse.Summary, cfg.Model, tokens, elapsed)
 	_ = logos.UpdateCache(paths, parsedResponse.Files, aiClient, cfg)
 
-	fmt.Printf("📊 Tokens usados (total): %s/%s\n\n", formatThousands(totalTokens), formatThousands(cfg.TokenBudget))
+	fmt.Println(logos.FgGray + "─────────────────────────────────────────────────" + logos.Reset)
+	fmt.Printf("Model:  %s (%s) | Time: %s\n", cfg.Model, cfg.Provider, elapsed.Round(time.Millisecond))
+	fmt.Printf("Tokens: %s / %s\n", formatThousands(totalTokens), formatThousands(cfg.TokenBudget))
+	fmt.Println(logos.FgGray + "─────────────────────────────────────────────────" + logos.Reset)
 }

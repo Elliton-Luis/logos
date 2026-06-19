@@ -1,15 +1,14 @@
 package logos
 
 import (
-	"bufio"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+	"fmt"
 )
 
 type MetaPaths struct {
@@ -92,12 +91,8 @@ func Rollback(paths MetaPaths) {
 	slog.Info("Rollback do espaço de trabalho executado com sucesso!")
 }
 
-// AppendProgress grava uma nova entrada no docs/progress.md e retorna o total
-// acumulado de tokens usados (incluindo esta execução).
 func AppendProgress(target, action, instruction, aiSummary, modelName string, tokens int, elapsed time.Duration) int {
 	const progressFile = "docs/progress.md"
-	
-	// Garante que a pasta docs exista antes de tentar ler/escrever
 	_ = os.MkdirAll("docs", 0755)
 	
 	existing, _ := os.ReadFile(progressFile)
@@ -132,21 +127,4 @@ func sumTokens(content string) int {
 		}
 	}
 	return total
-}
-
-func AskForInput(prompt string) string {
-	fmt.Print(prompt)
-	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
-	return strings.TrimSpace(input)
-}
-
-func AskForConfirmation(prompt string) bool {
-	res := AskForInput(prompt)
-	res = strings.ToLower(res)
-	return res == "y" || res == "yes" || res == "s" || res == "sim"
-}
-
-func PrintUsage() {
-	fmt.Println("Uso: logos [-p groq|gemini] [-m model] <action> <target_file_or_folder> [instruction]")
 }
