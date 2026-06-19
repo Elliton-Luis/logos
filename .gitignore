@@ -1,9 +1,8 @@
-.env
-progress.md
-*.bak
-*.cache
-*.cache.hash
+env/
+.logos_meta/
+docs/
 
 # Ignorado automaticamente pelo Synapse CLI
 commit_pattern.md
 commit_pattern_pt.md
+.env
