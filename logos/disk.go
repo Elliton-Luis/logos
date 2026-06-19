@@ -1,6 +1,8 @@
 package logos
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -9,75 +11,88 @@ import (
 	"time"
 )
 
-// MetaPaths guarda os caminhos mapeados para o arquivo e seus metadados
 type MetaPaths struct {
-	Source string // O arquivo de código real (ex: testes/script.go)
-	Bak    string // O backup (ex: testes/script-go/.bak)
-	Cache  string // O cache (ex: testes/script-go/.cache)
-	Hash   string // O hash (ex: testes/script-go/.hash)
+	WorkspaceRoot string
+	Bak           string
+	Cache         string
+	Hash          string
 }
 
-// ResolveMetaPaths calcula os caminhos e cria os diretórios necessários
-func ResolveMetaPaths(inputPath string) MetaPaths {
-	dir := filepath.Dir(inputPath)
-	base := filepath.Base(inputPath)
-
-	// Substitui o ponto por hífen para criar o nome da pasta de isolamento (ex: script.go -> script-go)
-	folderName := strings.ReplaceAll(base, ".", "-")
-	metaDir := filepath.Join(dir, folderName)
-
-	// Cria os diretórios caso não existam
-	_ = os.MkdirAll(dir, 0755)
+func ResolveMetaPaths(targetPath string) MetaPaths {
+	metaDir := filepath.Join(".logos_meta", strings.ReplaceAll(filepath.Clean(targetPath), string(filepath.Separator), "_"))
 	_ = os.MkdirAll(metaDir, 0755)
 
 	return MetaPaths{
-		Source: inputPath,
-		Bak:    filepath.Join(metaDir, ".bak"),
-		Cache:  filepath.Join(metaDir, ".cache"),
-		Hash:   filepath.Join(metaDir, ".hash"),
+		WorkspaceRoot: targetPath,
+		Bak:           filepath.Join(metaDir, ".bak.json"),
+		Cache:         filepath.Join(metaDir, ".cache"),
+		Hash:          filepath.Join(metaDir, ".hash"),
 	}
 }
 
-func ReadOrCreateFile(paths MetaPaths, action string) (string, error) {
-	data, err := os.ReadFile(paths.Source)
-	if err == nil {
-		return string(data), nil
-	}
-	if os.IsNotExist(err) && action == "feat" {
-		if !AskForConfirmation(fmt.Sprintf("File '%s' does not exist. Do you want to create it from scratch? (y/n): ", paths.Source)) {
-			fmt.Println("Operation cancelled.")
-			os.Exit(0)
-		}
-		return "", nil
-	}
-	return "", err
-}
-
-func ReadFileIfExists(path string) (string, error) {
-	data, err := os.ReadFile(path)
+func ReadWorkspace(target string) ([]FilePayload, error) {
+	var files []FilePayload
+	info, err := os.Stat(target)
 	if err != nil {
-		return "", err
+		if os.IsNotExist(err) {
+			return files, nil
+		}
+		return nil, err
 	}
-	return string(data), nil
+
+	if !info.IsDir() {
+		data, err := os.ReadFile(target)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, FilePayload{Path: target, Content: string(data)})
+		return files, nil
+	}
+
+	err = filepath.Walk(target, func(path string, fileInfo os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if fileInfo.IsDir() && (strings.HasPrefix(fileInfo.Name(), ".") || fileInfo.Name() == "node_modules") {
+			return filepath.SkipDir
+		}
+		if !fileInfo.IsDir() {
+			ext := filepath.Ext(path)
+			if ext == ".go" || ext == ".html" || ext == ".js" || ext == ".css" || ext == ".json" || ext == ".md" || ext == ".txt" {
+				data, err := os.ReadFile(path)
+				if err == nil {
+					files = append(files, FilePayload{Path: path, Content: string(data)})
+				}
+			}
+		}
+		return nil
+	})
+
+	return files, err
 }
 
 func Rollback(paths MetaPaths) {
 	data, err := os.ReadFile(paths.Bak)
 	if err != nil {
-		slog.Error("No backup file found in isolated folder", "file", paths.Bak)
+		slog.Error("Nenhum ponto de restauração em lote encontrado.", "file", paths.Bak)
 		return
 	}
-	if err := os.WriteFile(paths.Source, data, 0644); err != nil {
-		slog.Error("Failed to revert the file", "error", err)
+
+	var backups []FilePayload
+	if err := json.Unmarshal(data, &backups); err != nil {
+		slog.Error("Falha ao ler dados do backup", "error", err)
 		return
 	}
-	slog.Info("Rollback completed successfully!", "file", paths.Source)
-	AppendProgress(paths.Source, "undo", "Reversion", "Restored from local isolated backup.", "N/A", 0)
+
+	for _, bk := range backups {
+		_ = os.MkdirAll(filepath.Dir(bk.Path), 0755)
+		_ = os.WriteFile(bk.Path, []byte(bk.Content), 0644)
+	}
+	slog.Info("Rollback do espaço de trabalho executado com sucesso!")
 }
 
-func AppendProgress(filePath, action, instruction, aiSummary, modelName string, tokens int) {
+func AppendProgress(target, action, instruction, aiSummary, modelName string, tokens int) {
 	const progressFile = "progress.md"
-
 	existing, _ := os.ReadFile(progressFile)
 	lineNumber := strings.Count(string(existing), "### ") + 1
 	timestamp := time.Now().Format("02/01/2006 15:04")
@@ -88,31 +103,29 @@ func AppendProgress(filePath, action, instruction, aiSummary, modelName string, 
 	}
 
 	entry := fmt.Sprintf("\n### %d. `%s` (%s) - %s\n> **Instruction:** %s\n> **Model:** %s\n> **Tokens:** %s\n\n**Technical Summary:**\n%s\n\n---\n",
-		lineNumber, filePath, action, timestamp, instruction, modelName, tokenInfo, aiSummary)
+		lineNumber, target, action, timestamp, instruction, modelName, tokenInfo, aiSummary)
 
 	f, err := os.OpenFile(progressFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		slog.Warn("Failed to record progress log", "error", err)
 		return
 	}
 	defer f.Close()
-
-	f.WriteString(entry)
+	_, _ = f.WriteString(entry)
 }
 
-func CleanMarkdown(text string) string {
-	text = strings.TrimSpace(text)
+func AskForInput(prompt string) string {
+	fmt.Print(prompt)
+	reader := bufio.NewReader(os.Stdin)
+	input, _ := reader.ReadString('\n')
+	return strings.TrimSpace(input)
+}
 
-	if strings.HasPrefix(text, "```") {
-		firstNewLine := strings.Index(text, "\n")
-		if firstNewLine != -1 {
-			text = text[firstNewLine+1:]
-		}
-	}
+func AskForConfirmation(prompt string) bool {
+	res := AskForInput(prompt)
+	res = strings.ToLower(res)
+	return res == "y" || res == "yes" || res == "s" || res == "sim"
+}
 
-	if strings.HasSuffix(text, "```") {
-		text = text[:len(text)-3]
-	}
-
-	return strings.TrimSpace(text)
+func PrintUsage() {
+	fmt.Println("Uso: logos [-p groq|gemini] [-m model] <action> <target_file_or_folder> [instruction]")
 }
