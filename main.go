@@ -9,26 +9,26 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"logos/logos"
 )
 
-// ensureDefaultPromptMD garante que um arquivo prompt.md de exemplo exista na raiz
 func ensureDefaultPromptMD() {
 	if _, err := os.Stat("prompt.md"); err == nil {
 		return
 	}
-	exampleContent := `# Exemplo de Prompt para o Logos CLI
-Ação Solicitada: feat
-Objetivo: Criar uma página index.html educativa explicando as melhores práticas de escrita de prompts para o Logos CLI.
+	exampleContent := `---
+arquivos_obrigatorios: [index.html, js/script.js, css/style.css]
+---
 
-## Requisitos da Página:
-1. Um design limpo, moderno e responsivo (pode usar um tema escuro elegante).
-2. Seções explicando:
-   - **Clareza de Contexto:** Como o Logos envia os arquivos atuais automaticamente.
-   - **Formato de Saída:** Por que não precisamos nos preocupar com a estrutura (o Go cuida disso via JSON).
-   - **Instruções Modulares:** A vantagem de usar arquivos ".md" separados para prompts complexos.
-3. Adicione um componente visual bonito (como cards ou uma timeline) detalhando o fluxo de dados (Workspace -> Go -> IA -> Go -> Disco).
+# Instrução Principal
+Crie uma página moderna e limpa.
+
+# Especificações de Arquivos
+
+## index.html
+- Deve conter a estrutura base HTML5 explicando boas práticas de prompts.
 `
 	_ = os.WriteFile("prompt.md", []byte(exampleContent), 0644)
 	slog.Info("Arquivo 'prompt.md' de exemplo criado automaticamente na raiz!")
@@ -36,7 +36,7 @@ Objetivo: Criar uma página index.html educativa explicando as melhores prática
 
 func main() {
 	logos.EnsureGitignore()
-	ensureDefaultPromptMD() // Garante a criação do prompt.md de exemplo
+	ensureDefaultPromptMD()
 
 	dryRun := flag.Bool("dry-run", false, "Shows changes without saving updates")
 	verbose := flag.Bool("v", false, "Enables debug log output")
@@ -56,6 +56,7 @@ func main() {
 
 	var action, targetPath, instruction string
 
+	// 1. MODO INTERATIVO
 	if len(flag.Args()) == 0 {
 		fmt.Println("🚀 Logos CLI - Workspace Interactive Mode")
 		fmt.Printf("🤖 Active AI: %s | Model: %s\n\n", strings.ToUpper(cfg.Provider), cfg.Model)
@@ -80,13 +81,33 @@ func main() {
 				instruction = logos.AskForInput("Type your instruction: ")
 			}
 		}
+
+	// 2. MODO ARQUIVO ÚNICO (Ex: go run . prompt.md)
+	} else if len(flag.Args()) == 1 {
+		argFile := flag.Arg(0)
+		if _, err := os.Stat(argFile); err == nil {
+			data, err := os.ReadFile(argFile)
+			if err != nil {
+				slog.Error("Failed to read prompt file", "path", argFile, "error", err)
+				os.Exit(1)
+			}
+			slog.Info("Running in Single Prompt File Mode", "file", argFile)
+			
+			action = "feat" 
+			targetPath = "." 
+			instruction = strings.TrimSpace(string(data))
+		} else {
+			slog.Error("Single argument provided but it is not a valid file path", "arg", argFile)
+			os.Exit(1)
+		}
+
+	// 3. MODO TRADICIONAL
 	} else {
 		action = strings.ToLower(flag.Arg(0))
 		targetPath = flag.Arg(1)
 		
 		if len(flag.Args()) >= 3 {
 			argPrompt := flag.Arg(2)
-			// VALIDAÇÃO INTELIGENTE: Se o argumento apontar para um arquivo real, lê o arquivo
 			if _, err := os.Stat(argPrompt); err == nil {
 				data, err := os.ReadFile(argPrompt)
 				if err == nil {
@@ -96,11 +117,9 @@ func main() {
 					instruction = argPrompt
 				}
 			} else {
-				// Se não for um arquivo, assume que é o texto direto do prompt entre aspas
 				instruction = argPrompt
 			}
 		} else if action != "undo" && action != "cache" {
-			// Fallback caso não passe o terceiro argumento, tenta ler o prompt.md padrão da raiz
 			if data, err := os.ReadFile("prompt.md"); err == nil {
 				slog.Info("No instruction argument provided. Using default 'prompt.md'")
 				instruction = strings.TrimSpace(string(data))
@@ -141,8 +160,13 @@ func main() {
 
 	cacheContext, _ := os.ReadFile(paths.Cache)
 
-	systemPrompt := `Você é um engenheiro de software experiente. Você recebe o contexto de um workspace de arquivos e uma instrução.
-Você DEVE obrigatoriamente responder em um formato JSON válido com a exata estrutura abaixo:
+	// 🔥 ADAPTADO: O systemPrompt agora força o cumprimento estrito dos parâmetros do arquivo
+	systemPrompt := `Você é um engenheiro de software experiente. Você recebe o contexto de um workspace e uma instrução estruturada.
+DIRETRIZES DE ESCOPO:
+1. Se a instrução possuir uma lista de arquivos obrigatórios ou mapeamento de caminhos (ex: index.html, js/script.js), você DEVE criar exatamente esses arquivos nos caminhos informados.
+2. Se um arquivo foi listado no cabeçalho ou metadados, mas não detalhado na especificação do texto, use seu conhecimento para criá-lo de forma completa e profissional para complementar o projeto.
+
+Sua resposta DEVE obrigatoriamente ser um formato JSON válido com a exata estrutura abaixo:
 {
   "summary": "Resumo técnico sucinto das alterações feitas",
   "files": [
@@ -152,7 +176,7 @@ Você DEVE obrigatoriamente responder em um formato JSON válido com a exata est
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Ação Solicitada: %s\n", action))
-	sb.WriteString(fmt.Sprintf("Instrução do Usuário: %s\n\n", instruction))
+	sb.WriteString(fmt.Sprintf("Instrução do Usuário:\n%s\n\n", instruction))
 	
 	if len(cacheContext) > 0 {
 		sb.WriteString(fmt.Sprintf("Mapa Estrutural Prévio (Cache):\n%s\n\n", string(cacheContext)))
@@ -160,17 +184,22 @@ Você DEVE obrigatoriamente responder em um formato JSON válido com a exata est
 	
 	sb.WriteString("--- ARQUIVOS ATUAIS NO WORKSPACE ---\n")
 	if len(workspaceFiles) == 0 {
-		sb.WriteString("(O workspace está vazio, crie os arquivos do zero conforme solicitado)\n")
+		sb.WriteString("(O workspace está vazio, crie a árvore de arquivos respeitando os parâmetros da instrução)\n")
 	} else {
 		for _, f := range workspaceFiles {
-			sb.WriteString(fmt.Sprintf("📄 Arquivo: %s\n```\n%s\n```\n\n", f.Path, f.Content))
+			sb.WriteString(fmt.Sprintf("📄 Arquivo: %s\n```\n%s\n
+```\n\n", f.Path, f.Content))
 		}
 	}
 
 	userPromptText := sb.String()
 
 	slog.Info(fmt.Sprintf("Consulting AI via %s (%s)...", cfg.Provider, cfg.Model))
+
+	startTime := time.Now()
 	rawAiResponse, tokens, err := aiClient.Generate(context.Background(), systemPrompt, userPromptText, 0.2)
+	elapsed := time.Since(startTime)
+
 	if err != nil {
 		slog.Error("AI execution failure", "error", err)
 		os.Exit(1)
@@ -186,7 +215,9 @@ Você DEVE obrigatoriamente responder em um formato JSON válido com a exata est
 		slog.Warn("Could not display diff visualizer", "error", err)
 	}
 
-	fmt.Printf("\n✨ AI Technical Summary:\n%s\n\n", parsedResponse.Summary)
+	fmt.Printf("\nAI Technical Summary:\n%s\n\n", parsedResponse.Summary)
+	fmt.Printf("Model: %s (%s) | 🔢 Tokens: %d | ⏱️  Time: %s\n\n",
+		cfg.Model, cfg.Provider, tokens, elapsed.Round(time.Millisecond))
 
 	if *dryRun {
 		fmt.Println("\nMode --dry-run active. Changes were not written down.")
