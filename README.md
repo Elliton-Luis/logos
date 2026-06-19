@@ -1,113 +1,140 @@
 # Logos CLI
-Logos é um editor de código assistido por Inteligência Artificial (LLMs) de alta performance rodando diretamente no terminal. O projeto foi concebido do zero em Go puro com o objetivo de estudar e validar o comportamento de agentes autônomos de IA, buscando máxima eficiência de processamento e economia de tokens através de um harness arquitetural customizado.
 
-## A Ideia do Projeto & O Harness Customizado
-O diferencial técnico do projeto reside em como o contexto e o ambiente de execução são gerenciados de forma manual para extrair o máximo do modelo de linguagem:
+Logos é um assistente de desenvolvimento de IA focado em automação e edição de código estruturado diretamente pelo terminal. Desenvolvido em Go puro, o projeto foi concebido para atuar como um agente local eficiente, mitigando o desperdício de tokens na janela de contexto através de isolamento de escopo, gerenciamento de cache arquitetural e validação rígida de outputs via schemas estruturados.
 
-1. **O Harness de Contexto Baseado em Cache**: A IA nunca recebe dados cegamente. Toda vez que um arquivo é processado, o sistema gera um mapa estrutural descritivo do código (.cache). Esse cache serve como um "ancorador arquitetural", garantindo que modificações incrementais respeitem as variáveis globais sem estourar a janela de contexto.
-2. **Isolamento de Metadados Contra Sujeira Visual**: Arquivos de suporte de IA costumam poluir o espaço de trabalho. O Logos mitiga isso analisando o caminho do arquivo e criando automaticamente uma subpasta dedicada de metadados (ex: testes/script-go/), onde esconde caches, hashes de validação e backups (.bak) locais.
-3. **Padrão XML Restrito e Sanitização**: Para prevenir alucinações, o motor impõe um output rígido encapsulado em tags XML. O Logos intercepta o fluxo bruto, extrai a modificação e rejeita qualquer lixo textual adjacente.
+## Visão Geral da Arquitetura
 
-## Arquitetura do Sistema
-O projeto adota um design *Flat Grouped*, mantendo alta modularidade sem criar árvores de arquivos profundas ou pacotes excessivos:
+O diferencial técnico do Logos reside no controle manual do ambiente de execução e do payload enviado às LLMs, garantindo previsibilidade e segurança ao alterar arquivos em disco:
 
-* **`main.go` (Ponto de Entrada)**: Responsável por parsear as flags da CLI, inicializar o ambiente e orquestrar o fluxo principal das ações.
-* **`logos/ai.go` (Engine de IA)**: Controla a integração HTTP com a API do Groq, gerencia o algoritmo de *Backoff Exponencial* para retries e faz o parse das tags XML.
-* **`logos/config.go` (Configurações)**: Gerencia o carregamento dinâmico do `.env` e a criação automatizada de defesas estruturais como o `.gitignore`.
-* **`logos/disk.go` (Gerenciador de Disco)**: Onde reside a inteligência do *harness* para mapear caminhos, isolar arquivos de suporte, criar diretórios sob demanda e rodar rotinas de rollback.
-* **`logos/prompts.go` (Cognição)**: Centraliza as personas (System Prompts) do agente para cada modo de operação (`feat`, `fix`, `refactor`, `doc`).
-* **`logos/terminal.go` (Interface)**: Engine de captura de inputs do usuário, confirmações e renderização visual do `git diff`.
+1.  **Harness de Contexto e Agregação de Arquivos**: O agente permite ler múltiplos arquivos simultaneamente (como códigos-fonte, arquivos de documentação, requisitos de vagas ou perfis profissionais). O sistema lê e empilha esses dados no payload, fornecendo todo o contexto necessário para que a IA gere alterações cirúrgicas.
+2.  **Isolamento de Metadados e Caches Globais**: O Logos resolve caminhos dinamicamente e cria um diretório oculto centralizado (`.logos_meta/`). Nele são armazenados mapas estruturais descritivos (`.cache`), hashes de validação de estado e cópias de segurança completas em lote (`.bak.json`), limpando visualmente a raiz do workspace.
+3.  **Casco de Proteção de Disco (Hard Wall)**: O motor em Go valida estritamente o retorno da IA. Se o modelo tentar extrapolar seu escopo gerando caminhos de arquivos indevidos, ou tentar corromper arquivos estruturais vitais (como o próprio `main.go` ou configurações locais em `env/`), o Logos intercepta o payload, aplica o log de erro e aborta a escrita.
+4.  **Geração Baseada em JSON Estruturado**: Diferente de abordagens baseadas em parsing de markdown livre, o ecossistema do Logos força os provedores a responderem em formatos JSON rígidos com estruturas de propriedades previamente delimitadas, minimizando quebras de processamento.
 
-## Estrutura de Pastas
+## Estrutura do Projeto
+
+O projeto adota o design *Flat Grouped*, organizando os Markdowns em documentação centralizada e isolando as chaves de ambiente:
+
 ```plain
 LOGOS/
-├── logos/               # Core Engine (Pacote isolado do Logos)
-│   ├── ai.go            # Conector Groq, gerenciador de retries e parser XML
-│   ├── config.go        # Setup do .env e gerador automático de .gitignore
-│   ├── disk.go          # Resolução de MetaPaths e isolamento de arquivos técnicos
-│   ├── prompts.go       # System Prompts e injeção de regras estruturadas
-│   └── terminal.go      # Sistema de interações no console e renderizador de diff
-├── .env                 # Chaves de API locais (Ignorado no Git)
-├── go.mod               # Declaração do módulo Go puro
-├── main.go              # Arquivo principal e tratamento de flags
-└── progress.md          # Log consolidado de progresso do Agente
+├── .logos_meta/         # Metadados, históricos de rollback e caches locais (Ignorado)
+├── docs/                # Documentação descritiva e arquivos de instrução do agente
+│   ├── commit_pattern.md
+│   ├── progress.md      # Registro histórico consolidado de alterações e uso de tokens
+│   └── prompt.md        # Instrução descritiva padrão do espaço de trabalho
+├── env/                 # Diretório restrito de configurações de ambiente
+│   └── .env             # Chaves de API locais (Ignorado)
+├── logos/               # Módulos internos do pacote central do Logos
+│   ├── ai.go            # Conector de APIs (Gemini/Groq), backoff exponencial e parser JSON
+│   ├── config.go        # Loader de ambiente e injeção inteligente do .gitignore
+│   ├── disk.go          # Leitor de workspace estruturado, gerador de MetaPaths e rollback
+│   ├── prompts.go       # Armazenamento de prompts estáticos do sistema
+│   └── terminal.go      # Renderizador visual de diffs coloridos e captura de confirmação
+├── .gitignore           # Defesas estruturais auto-atualizáveis
+├── go.mod               # Declaração do módulo Go nativo
+└── main.go              # Ponto de entrada, tratamento de flags e roteamento de escopo
 ```
 
-## Modos de Operação e Comandos
-O Logos opera tanto de forma inline quanto em um modo assistido:
-1. Modo Interativo
-Execute o binário sem argumentos adicionais para iniciar o assistente passo a passo no console:
-```bash
-go run main.go
-```
-2. Modo CLI Inline
-Passe os parâmetros diretamente para execução imediata:
-```bash
-go run main.go <ação> <caminho_do_arquivo> ["instrução"]
-```
+## Instalação
 
-**OU**
-
-1. Fazer o Build do projeto:
+Para compilar o binário e disponibilizá-lo diretamente no terminal do seu sistema operacional:
 
 ```bash
-git clone https://github.com/Elliton-Luis/logos.git
+git clone [https://github.com/Elliton-Luis/logos.git](https://github.com/Elliton-Luis/logos.git)
 cd logos
 go build -o logos .
 sudo mv logos /usr/local/bin/
 ```
-2. A partir disso os comandos seriam:
 
-```
-logos <ação> <caminho_do_arquivo> ["instrução"]
-```
-Ex. logos feat controllers/userController "Faça as funçoes de Criar e deletar um Usuario"
+Após o build, o comando torna-se global:
 
-## Ações Disponíveis (<ação>)
-| Comando | Escopo | Descrição |
-| --- | --- | --- |
-| feat | Edição | Cria um arquivo do zero ou insere uma nova lógica no local ideal da estrutura existente. |
-| fix | Edição | Analisa o código atual, isola o bug relatado na instrução e corrige estritamente a linha defeituosa. |
-| refactor | Edição | Otimiza a performance e legibilidade do código aplicando Clean Code sem alterar o comportamento atual. |
-| doc | Edição | Insere documentação técnica útil (padrão GoDoc) nas funções e structs sem tocar na lógica de programação. |
-| cache | Suporte | Força o harness a atualizar o mapa estrutural descritivo (.cache) do arquivo alvo. |
-| undo | Suporte | Desfaz instantaneamente a última alteração, restaurando o arquivo original com base no .bak isolado. |
-
-## Modificadores Globais (Flags) -- Em Desenvolvimento
-- `-m <modelo>`: Altera o modelo de IA em tempo de execução (Padrão: llama-3.3-70b-versatile).
-- `-v`: Ativa logs verbosos de Debug (Exibe payloads trafegados na API e status de retries).
-- `--dry-run`: Executa a consulta e renderiza o diff na tela, mas não altera nada em disco.
-
-## Exemplos Práticos de Uso
-Criar uma nova rotina isolando a sujeira técnica automaticamente:
 ```bash
-go run main.go feat testes/calculadora.go "crie uma funcao de soma"
+logos <ação> <arquivos_alvo...> [instrução]
 ```
-Gera o arquivo testes/calculadora.go limpo e move caches/backups para testes/calculadora-go/.
 
-Refatorar o código sem aplicar as mudanças em disco (Modo Seguro):
+## Uso
+
+### Modos de Operação
+
+#### 1. Modo Interativo
+
+Execute o binário sem argumentos adicionais para iniciar o assistente passo a passo no terminal:
+
 ```bash
-go run main.go --dry-run refactor testes/calculadora.go "otimize o laço de repeticao"
+go run .
 ```
-Reverter o arquivo para o estado anterior:
+
+#### 2. Modo CLI Inline
+
+Os parâmetros podem ser passados em lote diretamente para execução em linha de comando:
+
 ```bash
-go run main.go undo testes/calculadora.go
+go run . <ação> <arquivos_alvo...> [instrução_ou_texto]
 ```
 
-## Fluxo de Processamento do Harness
-```mermaid
-graph TD
-    A[Caminho do Arquivo Informado] --> B[ResolveMetaPaths: Mapeia caminhos e cria diretórios]
-    B --> C[Busca código original e lê .cache se existir]
-    C --> D[Groq Request: Injeta Persona + Código + Instrução]
-    D --> E[Parser XML: Valida e extrai progresso e código limpo]
-    E --> F[Renderiza Diff na tela]
-    F --> G{Usuário Confirma?}
-    G -->|Sim| H[Salva arquivo .go e isola backup .bak / atualiza .cache]
-    G -->|Não| I[Aborta operação com segurança]
+### Ações Disponíveis (`<ação>`)
+
+| Comando    | Tipo    | Descrição                                                                                                   |
+| :--------- | :------ | :---------------------------------------------------------------------------------------------------------- |
+| `feat`     | Edição  | Cria um arquivo do zero ou insere uma nova lógica funcional no local semântico correto.                     |
+| `fix`      | Edição  | Analisa o arquivo atual, localiza a falha reportada e corrige estritamente a linha defeituosa.              |
+| `refactor` | Edição  | Otimiza performance e legibilidade do código aplicando Clean Code sem alterar o comportamento.              |
+| `doc`      | Edição  | Insere documentação técnica útil (padrão GoDoc ou equivalentes) nas assinaturas de funções.                 |
+| `cache`    | Suporte | Força o sistema a computar o mapa estrutural descritivo do arquivo no diretório `.logos_meta`.              |
+| `undo`     | Suporte | Executa um rollback em lote, restaurando o estado anterior dos arquivos através do arquivo `.bak.json`.      |
+
+### Modificadores e Atalhos Globais (Flags)
+
+As flags de controle de provedor e modelo devem ser inseridas antes da declaração da ação da CLI:
+
+*   `-gemini`: Atalho instantâneo. Chaveia o fluxo para a API do Google AI Studio utilizando o modelo de alta performance `gemini-2.5-flash`.
+*   `-groq`: Atalho instantâneo. Altera o fluxo para o provedor Groq executando o modelo `llama-3.3-70b-versatile`.
+*   `-p <provedor>`: Define manualmente o provedor de destino (`groq` ou `gemini`).
+*   `-m <modelo>`: Substitui o identificador do modelo em tempo de execução.
+*   `-v`: Ativa o modo verboso, expondo logs de debug internos e payloads trafegados.
+*   `--dry-run`: Consulta a IA e plota o visualizador de alterações na tela, mas descarta a escrita física em disco.
+
+### Exemplos Práticos
+
+**Alteração rápida local de escopo único:**
+
+```bash
+logos -gemini feat main.py "Faça uma função de soma"
 ```
 
-## Roadmap de Evolução
-- [ ] Suporte a Contexto Multi-Arquivo: Evoluir o ResolveMetaPaths para permitir que o Agente leia arquivos de dependência correlacionados.
-- [ ] Local LLM Integration: Adaptar o conector do ai.go para chavear rotas de API locais via Ollama.
-- [ ] Token Counter Autônomo: Implementar um calculador local de tokens antes do envio do payload para otimização preditiva de custos.
+Garante uma resposta purista, idiomática e sem injeções de códigos redundantes de teste.
+
+**Geração ou Ajuste de Contexto Baseado em Múltiplos Arquivos (ex: Currículo):**
+
+```bash
+logos -gemini feat cv_atual.md modelo_vaga.txt perfil_profissional.md docs/prompt.md
+```
+
+O Logos fará a leitura integral de todos os arquivos informados no comando, aplicando as diretrizes contidas em `docs/prompt.md` para atualizar cirurgicamente apenas o arquivo de destino.
+
+**Refatoração Segura de Código:**
+
+```bash
+logos --dry-run refactor controllers/user.go
+```
+
+Exibe o diff completo e colorido comparando o código atual e a sugestão da IA sem modificar o arquivo original.
+
+**Desfazer Alterações:**
+
+```bash
+logos undo controllers/user.go
+```
+
+## Fluxo de Processamento
+
+Fragmento do códigograph TD
+    A[Caminho dos Arquivos Informados] --> B[Agregação de Workspace: Consolida arquivos no prompt]
+    B --> C[Carrega Cache estrutural prévio se houver]
+    C --> D[Roteador HTTP: Injeta regras rígidas de segurança + Contexto]
+    D --> E[AER: Retornos baseados estritamente em Schemas JSON]
+    E --> F[Filtro de Segurança em Go: Bloqueia caminhos e paths inválidos]
+    F --> G[Renderização Visual de Alterações: git diff]
+    G --> H{Confirmação do Usuário?}
+    H -->|Sim| I[Gera Backup .bak.json e escreve arquivos autorizados em disco]
+    H -->|Não| J[Aborta a operação mantendo os arquivos intactos]
